@@ -1,0 +1,309 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Horror Phone Voice</title>
+
+<style>
+html, body {
+    margin: 0;
+    width: 100%;
+    height: 100%;
+    background: #050505;
+    color: white;
+    font-family: Arial, sans-serif;
+}
+
+body {
+    display: grid;
+    place-items: center;
+}
+
+main {
+    width: min(430px, 88vw);
+    text-align: center;
+}
+
+h1 {
+    font-size: 34px;
+    letter-spacing: 2px;
+    margin: 0 0 10px;
+}
+
+p {
+    color: #999;
+    margin: 0 0 28px;
+}
+
+button {
+    width: 100%;
+    height: 105px;
+    border: 0;
+    border-radius: 22px;
+    background: #a4001c;
+    color: white;
+    font-size: 28px;
+    font-weight: bold;
+    cursor: pointer;
+}
+
+#stop {
+    display: none;
+    background: #222;
+    margin-top: 14px;
+}
+
+#status {
+    height: 24px;
+    margin-top: 20px;
+    color: #bbb;
+}
+</style>
+</head>
+
+<body>
+
+<main>
+    <h1>☎ HORROR PHONE</h1>
+    <p>Live-Horror-Stimme</p>
+
+    <button id="start">🎤 START</button>
+    <button id="stop">⏹ STOPP</button>
+
+    <div id="status">Bereit</div>
+</main>
+
+<script>
+
+let audioContext = null;
+let microphoneStream = null;
+
+const startButton = document.getElementById("start");
+const stopButton = document.getElementById("stop");
+const status = document.getElementById("status");
+
+async function startVoice() {
+
+    try {
+
+        microphoneStream =
+            await navigator.mediaDevices.getUserMedia({
+                audio: {
+                    echoCancellation: true,
+                    noiseSuppression: true,
+                    autoGainControl: false
+                }
+            });
+
+        audioContext =
+            new (window.AudioContext ||
+                 window.webkitAudioContext)();
+
+        await audioContext.resume();
+
+        const input =
+            audioContext.createMediaStreamSource(
+                microphoneStream
+            );
+
+        /*
+         * TELEFON-FILTER
+         */
+
+        const highPass =
+            audioContext.createBiquadFilter();
+
+        highPass.type = "highpass";
+        highPass.frequency.value = 300;
+        highPass.Q.value = 0.7;
+
+
+        const lowPass =
+            audioContext.createBiquadFilter();
+
+        lowPass.type = "lowpass";
+        lowPass.frequency.value = 2900;
+        lowPass.Q.value = 0.7;
+
+
+        /*
+         * DUNKLER HORROR-KLANG
+         */
+
+        const body =
+            audioContext.createBiquadFilter();
+
+        body.type = "peaking";
+        body.frequency.value = 650;
+        body.Q.value = 1;
+        body.gain.value = 3;
+
+
+        const presence =
+            audioContext.createBiquadFilter();
+
+        presence.type = "peaking";
+        presence.frequency.value = 1800;
+        presence.Q.value = 0.8;
+        presence.gain.value = -2;
+
+
+        /*
+         * LEICHTE VERZERRUNG
+         */
+
+        const distortion =
+            audioContext.createWaveShaper();
+
+        const curve =
+            new Float32Array(4096);
+
+        for (let i = 0; i < curve.length; i++) {
+
+            const x =
+                i * 2 / (curve.length - 1) - 1;
+
+            curve[i] =
+                Math.tanh(1.8 * x) /
+                Math.tanh(1.8);
+        }
+
+        distortion.curve = curve;
+        distortion.oversample = "2x";
+
+
+        /*
+         * KOMPRESSION
+         */
+
+        const compressor =
+            audioContext.createDynamicsCompressor();
+
+        compressor.threshold.value = -30;
+        compressor.knee.value = 18;
+        compressor.ratio.value = 5;
+        compressor.attack.value = 0.004;
+        compressor.release.value = 0.14;
+
+
+        /*
+         * LAUTSTÄRKE
+         */
+
+        const master =
+            audioContext.createGain();
+
+        master.gain.value = 0.68;
+
+
+        /*
+         * KURZER HALL / TELEFON-ECHO
+         * Kein Feedback -> weniger Pfeifen
+         */
+
+        const delay =
+            audioContext.createDelay(0.25);
+
+        delay.delayTime.value = 0.085;
+
+
+        const echo =
+            audioContext.createGain();
+
+        echo.gain.value = 0.08;
+
+
+        /*
+         * AUDIO-KETTE
+         */
+
+        input.connect(highPass);
+
+        highPass.connect(lowPass);
+
+        lowPass.connect(body);
+
+        body.connect(presence);
+
+        presence.connect(distortion);
+
+        distortion.connect(compressor);
+
+        compressor.connect(master);
+
+        compressor.connect(delay);
+
+        delay.connect(echo);
+
+        echo.connect(master);
+
+        master.connect(
+            audioContext.destination
+        );
+
+
+        /*
+         * UI
+         */
+
+        startButton.style.display = "none";
+        stopButton.style.display = "block";
+
+        status.textContent =
+            "🎤 Sprich jetzt …";
+
+    }
+
+    catch (error) {
+
+        console.error(error);
+
+        status.textContent =
+            "Mikrofon konnte nicht gestartet werden.";
+
+    }
+}
+
+
+async function stopVoice() {
+
+    if (microphoneStream) {
+
+        microphoneStream
+            .getTracks()
+            .forEach(track => track.stop());
+
+        microphoneStream = null;
+    }
+
+
+    if (audioContext) {
+
+        await audioContext.close();
+
+        audioContext = null;
+    }
+
+
+    startButton.style.display = "block";
+    stopButton.style.display = "none";
+
+    status.textContent = "Bereit";
+}
+
+
+startButton.addEventListener(
+    "click",
+    startVoice
+);
+
+stopButton.addEventListener(
+    "click",
+    stopVoice
+);
+
+</script>
+
+</body>
+</html>
